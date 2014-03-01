@@ -1,0 +1,119 @@
+
+#ifdef DEBUG
+#define D(x) x
+#else
+#define D(x)
+#endif
+#include <assert.h> 
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#define h_addr h_addr_list[0]
+
+int main(int argc, char** argv){
+  int       fdrecv;
+  int       fdsend;
+  struct    sockaddr_in6 serverAddr,clientAddr,broadCast;
+  char      sendping[21];
+  char      recvpong[21];
+  socklen_t broadsize;
+  socklen_t serversize;
+  struct    timeval tvping;
+  struct    timeval tvnow;
+  int       lenRecv;
+  int       enable = 1;
+  int       n = 50;     //simulate packet loss, set buffer 
+  if (argc != 2)
+  {
+    printf("usge: bcastclient <PORT>\n");
+    exit(1);
+  }
+  int i; // used for for loop
+    //recv socket
+    fdrecv = socket(AF_INET6,SOCK_DGRAM,IPPROTO_UDP);
+    if (fdrecv<0){
+      perror("socket fdrecv error");
+      exit(1);
+    }
+    if(setsockopt(fdrecv,SOL_SOCKET,SO_RCVBUF,&n,sizeof(n))==-1){
+      perror("Can't setsockopt for fdrecv\n");
+      exit(1);
+    }
+    //send socket
+    
+    fdsend = socket(AF_INET6,SOCK_DGRAM,IPPROTO_UDP);
+    if (fdsend<0){
+      perror("scoket fdsend error\n");
+      exit(1);
+    }
+    /*
+    if(setsockopt(fdsend, SOL_SOCKET,SO_BROADCAST,&enable,sizeof(enable))==-1){
+      perror("Cant't setsocketopt for fdsend\n");
+      exit(1);
+    }
+    */
+    unsigned int outif;
+    outif = if_nametoindex("eth0.3");
+    if(setsockopt(fdsend,IPPROTO_IPV6,IPV6_MULTICAST_IF,&outif,sizeof(outif))!=0){
+      perror("setipv6 socket opt fail");
+      exit(1);
+    }
+    
+    memset(&clientAddr,0,sizeof(clientAddr));
+    clientAddr.sin6_family = AF_INET6;
+    clientAddr.sin6_port = htons((u_short) atoi(argv[1]));
+    clientAddr.sin6_addr= in6addr_any;
+    /*
+    if(bind(fdrecv,(struct sockaddr *)&clientAddr,sizeof(clientAddr))<0){
+      perror("bind error");
+      exit(1);
+    }
+*/
+    memset(&broadCast,0,sizeof(broadCast));
+    broadCast.sin6_family = AF_INET6;
+    broadCast.sin6_port = htons((u_short) atoi(argv[1]));
+    struct hostent *pt = gethostbyname2("ff02::1",AF_INET6);
+    memcpy(&broadCast.sin6_addr,pt->h_addr,pt->h_length); 
+    gettimeofday(&tvping,NULL);
+    sprintf(sendping,"PING %ld",tvping.tv_sec*1000000+tvping.tv_usec);
+    assert(strlen(sendping)==21);
+    broadsize = sizeof(broadCast);
+    sendto(fdsend,sendping,21,0,(struct sockaddr *)&broadCast,broadsize);
+   if(bind(fdrecv,(struct sockaddr *)&clientAddr,sizeof(clientAddr))<0){
+      perror("bind error");
+      exit(1);
+   }
+    D(fprintf(stderr,"msg=%s sent\n",sendping));
+    
+  while(1){
+    memset(&serverAddr,0,sizeof(serverAddr));     
+    serversize = sizeof(serverAddr); 
+    lenRecv = recvfrom(fdrecv,recvpong,21,0,
+                      (struct sockaddr *)&serverAddr, 
+                      &serversize);
+    if(lenRecv!=21){
+      continue;
+    }
+    if(recvpong[1] == 'I')
+      continue;
+    D(fprintf(stderr,"recv= %s\n",recvpong));
+    gettimeofday(&tvnow,NULL);
+    char tmp[1024];
+    uint64_t pongT;
+    sscanf(recvpong,"%s %ld",tmp,&pongT);
+    D(printf("pongT=%ld\n",pongT));
+    uint64_t nowT = tvnow.tv_sec*1000000+tvnow.tv_usec; 
+    uint64_t delay = nowT-pongT;
+    char straddr[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &serverAddr.sin6_addr,straddr,sizeof(straddr)); 
+    printf("Ping from server %s, latency : %ldus\n",straddr,delay);
+  }
+
+}
