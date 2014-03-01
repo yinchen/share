@@ -1,0 +1,115 @@
+#include <sys/socket.h>
+#include <assert.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(int argc, char** argv){
+   
+  if(argc != 3){
+    printf("usage: bcastserver <port> <sleep_awake_period_in_second>\n");
+    exit(1);
+  }
+
+  int       timeS = (u_short) atoi (argv[2]);   //time of sleep and awake
+  socklen_t sizeclient;
+  fd_set    readset;    
+  int       fd;
+  char      recvping[21];
+  char      sendpong[21];
+  struct    sockaddr_in6 serverAddr,clientAddr;
+  int       n=50;     //simulate the packet loss, buffer size defined to be 50
+  struct    timeval adjust1; //used to adjust timeout
+  struct    timeval adjust2;  //used to adjust timeout
+  struct    timeval tv;       //timeval for select
+  srandom(time(NULL));
+  fd = socket(AF_INET6,SOCK_DGRAM,IPPROTO_UDP);
+  if( fd < 0 ){
+    perror("socket error");
+    exit(1);
+  }
+  if(setsockopt(fd,SOL_SOCKET,SO_RCVBUF,&n,sizeof(n))==-1){
+    perror("Can't setsockopt\n");
+    exit(1);
+  }
+  memset( &serverAddr,0,sizeof(serverAddr));
+  serverAddr.sin6_family = AF_INET6;
+  serverAddr.sin6_addr=in6addr_any;
+  serverAddr.sin6_port = htons((u_short) atoi(argv[1]));
+  
+  if(bind(fd,(struct sockaddr *)&serverAddr,sizeof(serverAddr))){
+    perror("bind error");
+    exit(1);
+  }
+  int max_fd = fd + 1; 
+ 
+  FD_ZERO(&readset);
+  FD_SET(fd,&readset); 
+  tv.tv_sec = timeS;        /* timeout for input seconds */
+  tv.tv_usec = 0;
+  int len; 
+  for (;;) {
+    FD_ZERO(&readset);
+    FD_SET(fd,&readset);
+    //printf("Awake now\n");
+    while( (select(max_fd, &readset, NULL, NULL, &tv)) != 0 ) {
+      if(FD_ISSET(fd,&readset)){
+        memset(&clientAddr,0,sizeof(clientAddr));
+        sizeclient = sizeof(clientAddr);
+        len = recvfrom(fd,recvping,21,0,
+                          (struct sockaddr *)&clientAddr, 
+                          &sizeclient);
+        clientAddr.sin6_port = htons((u_short) atoi(argv[1]));
+        //printf("recv from IP:%s\n",inet_ntoa(clientAddr.sin_addr));
+        if(len!=21)
+          continue;
+        strncpy(sendpong,recvping,21);
+        //fprintf(stderr,"msg=%.21s\n",recvping);
+        sendpong[1] = 'O'; 
+        unsigned long utimeSleep = rand()%4000000;
+        usleep(utimeSleep);
+        ssize_t temp;
+
+        temp = sendto(fd,sendpong,21,0,
+              (struct sockaddr *)&clientAddr, 
+              sizeclient);
+        if(temp<0){
+          perror("send error");
+        }
+        fflush(stdout);
+      }  
+        FD_ZERO(&readset);
+        FD_SET(fd,&readset);
+    }
+
+    /* awake timer expired. */
+    //printf("Sleeping\n"); 
+    tv.tv_sec = 3;
+    tv.tv_usec = 0;
+    FD_ZERO(&readset);
+    FD_SET(fd,&readset);
+    /*  while loop that wasted the buffer during sleeping */
+    while( (select(max_fd, &readset, NULL, NULL, &tv)) != 0 ) {       
+      if(FD_ISSET(fd,&readset)){
+        char buff[1024];
+        memset(&clientAddr,0,sizeof(clientAddr));
+        sizeclient = sizeof(clientAddr);
+        len = recvfrom(fd,buff,1024,0,(struct sockaddr *)&clientAddr,&sizeclient);
+      }
+        FD_ZERO(&readset);
+        FD_SET(fd,&readset);
+    }
+    
+    /* reset timeout - tv */
+    tv.tv_sec = timeS;
+    tv.tv_usec = 0;
+    
+  }
+  close(fd);
+  exit(1);
+} 
+  // ...
